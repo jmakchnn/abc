@@ -1,53 +1,113 @@
 name: Compile Rulesets
 
 on:
+  # 允许手动触发工作流
   workflow_dispatch:
+  # 在推送到 main 分支时自动触发工作流
   push:
     branches: [main]
 
 jobs:
   x:
     runs-on: ubuntu-latest
+    
+    # 显式声明写入权限，确保 git-auto-commit-action 可以提交文件
+    permissions:
+      contents: write
+      
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Compile Rules (Exact Linux-equivalent)
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Compile Rules (Final & Stable)
         run: |
-          set -e  # 任何命令失败立即退出
-
-          mkdir -p out
-
-          # ========== 下载 mihomo ==========
-          curl -L https://github.com/MetaCubeX/mihomo/releases/download/v1.19.16/mihomo-linux-amd64-v1.19.16.gz -o /tmp/mihomo.gz
+          # 确保任何命令失败时立即退出，并给出报错信息
+          set -e  
+          
+          # 启用 nullglob，安全处理不存在的 .yaml 或 .list 文件
+          shopt -s nullglob
+          
+          # 更新并安装 jq (用于修正 sing-box 的 JSON 文件)
+          sudo apt-get update && sudo apt-get install -y jq
+          
+          # 创建必要的目录
+          mkdir -p out /tmp/fixed
+          
+          # ========== 下载工具 (直接下载到工作目录) ==========
+          echo "📥 Downloading tools (mihomo and sing-box)..."
+          
+          # 下载 Mihomo
+          curl -fL https://github.com/MetaCubeX/mihomo/releases/download/v1.19.16/mihomo-linux-amd64-v1.19.16.gz -o /tmp/mihomo.gz
           gunzip -c /tmp/mihomo.gz > mihomo
           chmod +x mihomo
-
-          # ========== 下载 sing-box ==========
-          curl -L https://github.com/SagerNet/sing-box/releases/download/v1.12.12/sing-box-1.12.12-linux-amd64.tar.gz -o /tmp/sb.tar.gz
+          
+          # 下载 Sing-box
+          curl -fL https://github.com/SagerNet/sing-box/releases/download/v1.12.12/sing-box-1.12.12-linux-amd64.tar.gz -o /tmp/sb.tar.gz
           tar xz -f /tmp/sb.tar.gz --strip-components=1
           chmod +x sing-box
-
-          # ========== 转换所有 .json → .srs ==========
+          
+          # ========== 1. 转换所有 .json → .srs (Sing-box) ==========
+          echo "---"
+          echo "🔧 Compiling .json to .srs (Sing-box)..."
           for f in in/*.json; do
-            [ -f "$f" ] || continue
+            # [ -f "$f" ] || continue 已经被 shopt -s nullglob 取代
+            
             base=$(basename "$f" .json)
-            ./sing-box rule-set compile --output "out/$base.srs" "$f"
+            FIXED_FILE="/tmp/fixed/$base.json"
+            TARGET_FILE="out/$base.srs"
+            
+            # 兼容性修正：强制设置 "version": 2，防止 Sing-box 编译失败
+            jq 'if .version != 2 then .version = 2 else . end' "$f" > "$FIXED_FILE"
+            
+            echo "✅ Compiling $f to $TARGET_FILE"
+            ./sing-box rule-set compile --output "$TARGET_FILE" "$FIXED_FILE"
           done
-
-          # ========== 转换所有 .yaml → .mrs (domain+ipcidr) ==========
+          
+          # ========== 2. 转换所有 .yaml → .mrs (Mihomo) ==========
+          echo "---"
+          echo "🔄 Converting .yaml to .mrs (Mihomo, Domain type)..."
           for f in in/*.yaml; do
-            [ -f "$f" ] || continue
             base=$(basename "$f" .yaml)
-            ./mihomo convert-ruleset domain/ipcidr yaml "$f" "out/$base.mrs"
-          done
-
-          # ========== 转换 .list 文件 ==========
-          for f in in/*.list; do
-            [ -f "$f" ] || continue
-            base=$(basename "$f" .list)
-            if [[ "$f" == *ip* ]] || [[ "$f" == *cidr* ]]; then
-              ./mihomo convert-ruleset ipcidr text "$f" "out/$base.mrs"
-            elif [[ "$f" == *domain* ]] || [[ "$f" == *host* ]]; then
-              ./mihomo convert-ruleset domain text "$f" "out/$base.mrs"
+            TARGET_FILE="out/$base.mrs"
+            
+            # 兼容性修正：使用更安全的 'domain' 类型，并修正文件名
+            echo "✅ Converting $f to $TARGET_FILE"
+            if ! ./mihomo convert-ruleset domain yaml "$f" "$TARGET_FILE"; then
+                echo "❌ FATAL: Mihomo YAML conversion failed for $f. 请检查 YAML 格式或规则类型是否为纯域名规则。"
+                exit 1
             fi
           done
+          
+          # ========== 3. 转换 .list 文件 (Mihomo Text) ==========
+          echo "---"
+          echo "🔄 Converting .list to .mrs (Mihomo Text)..."
+          for f in in/*.list; do
+            base=$(basename "$f" .list)
+            TARGET_FILE="out/$base.mrs"
+            
+            if [[ "$f" == *ip* ]] || [[ "$f" == *cidr* ]]; then
+              echo "✅ Converting $f (ipcidr) to $TARGET_FILE"
+              if ! ./mihomo convert-ruleset ipcidr text "$f" "$TARGET_FILE"; then
+                  echo "❌ FATAL: Mihomo IP/CIDR list conversion failed for $f."
+                  exit 1
+              fi
+            elif [[ "$f" == *domain* ]] || [[ "$f" == *host* ]]; then
+              echo "✅ Converting $f (domain) to $TARGET_FILE"
+              if ! ./mihomo convert-ruleset domain text "$f" "$TARGET_FILE"; then
+                  echo "❌ FATAL: Mihomo Domain list conversion failed for $f."
+                  exit 1
+              fi
+            fi
+          done
+          
+          echo "✅ All conversion processes completed successfully."
+          # 调试信息：确认文件是否生成
+          echo "--- FINAL DEBUG: Listing out/ directory contents ---"
+          ls -l out/
+          echo "----------------------------------------------------"
+
+      - name: Commit files
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          file_pattern: out/**
+          commit_message: "🤖 chore: Auto update compiled rulesets"
