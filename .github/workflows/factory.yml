@@ -1,14 +1,22 @@
-name: Rule Factory
+name: Rule Factory (Sing-box & Mihomo)
 
+# ===============================
+# 触发条件
+# ===============================
 on:
+  # 每天自动运行一次 (国际时间 00:00)
   schedule:
     - cron: '0 0 * * *'
+  
+  # 允许手动在 GitHub 页面上点击运行
   workflow_dispatch:
+  
+  # 当原材料文件有变动时自动触发
   push:
     branches:
       - main
     paths:
-      - 'src/**.json'
+      - 'src/**'  # 监听 src 目录下的所有文件
       - '.github/workflows/factory.yml'
 
 permissions:
@@ -21,58 +29,121 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Install sing-box
+      
+      # 1. 安装机器：sing-box 和 mihomo
+      - name: Install Dependencies
         run: |
-          LATEST_VERSION=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
-          VERSION_NUM=${LATEST_VERSION#v}
-          wget "https://github.com/SagerNet/sing-box/releases/download/${LATEST_VERSION}/sing-box-${VERSION_NUM}-linux-amd64.tar.gz"
-          tar -zxvf "sing-box-${VERSION_NUM}-linux-amd64.tar.gz"
+          echo "--- Installing sing-box ---"
+          S_VERSION=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
+          S_VERSION_NUM=${S_VERSION#v}
+          wget "https://github.com/SagerNet/sing-box/releases/download/${S_VERSION}/sing-box-${S_VERSION_NUM}-linux-amd64.tar.gz"
+          tar -zxvf "sing-box-${S_VERSION_NUM}-linux-amd64.tar.gz"
           sudo mv sing-box-*/sing-box /usr/local/bin/
           sudo chmod +x /usr/local/bin/sing-box
+          sing-box version
+          
+          echo "--- Installing mihomo ---"
+          M_VERSION=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r .tag_name)
+          M_BIN_NAME="mihomo-linux-amd64-${M_VERSION#v}.gz"
+          wget "https://github.com/MetaCubeX/mihomo/releases/download/${M_VERSION}/${M_BIN_NAME}"
+          gunzip ${M_BIN_NAME}
+          sudo mv mihomo-linux-amd64 /usr/local/bin/mihomo
+          sudo chmod +x /usr/local/bin/mihomo
+          mihomo -v
 
-      - name: Run Factory Line
+      # 2. 运行工厂生产线
+      - name: Run Factory Line (Process All Rules)
         run: |
-          SOURCE_DIR="src"
-          OUTPUT_DIR="rule-set"
+          # --- A. 路径配置区 ---
+          SOURCE_DIR="src"       # 原材料文件夹 (包含 json, yaml, domain/, ip/)
+          OUTPUT_DIR="rule-set"  # 成品文件夹 (.srs 和 .mrs 输出到这里)
           mkdir -p "$OUTPUT_DIR"
-
-          # --- 进货清单 (修改这里) ---
-          # 格式: "URL地址 | 自定义文件名"
+          shopt -s nullglob
+          
+          # --- B. 远程进货清单 (Sing-box AdGuard 转换) ---
+          # 格式: "上游链接 | 自定义文件名" (文件名不带后缀)
           declare -a REMOTE_FILES=(
             "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt | AdGuardSDNSFilter"
           )
-          # -------------------------
-
-          echo ">>> Processing Remote Rules..."
+          # ----------------------------------------------------------------
+          
+          echo ">>> 1. Processing Remote AdGuard Rules..."
           for rule in "${REMOTE_FILES[@]}"; do
             url="${rule%%|*}"
             name="${rule##*|}"
             url=$(echo "$url" | xargs)
             name=$(echo "$name" | xargs)
 
-            echo "Downloading: $name"
-            curl -L -s -o "temp.txt" "$url"
+            echo "📥 Downloading: $name"
+            # -s 静默下载, -o 输出到文件
+            curl -L -s -o "temp_${name}.txt" "$url"
 
-            if [ -f "temp.txt" ]; then
-               sing-box rule-set convert --type adguard --output "${OUTPUT_DIR}/${name}.srs" "temp.txt"
-               rm "temp.txt"
+            if [ -f "temp_${name}.txt" ] && [ -s "temp_${name}.txt" ]; then
+               sing-box rule-set convert --type adguard --output "${OUTPUT_DIR}/${name}.srs" "temp_${name}.txt"
+               echo "✅ Success: ${name}.srs"
+               rm "temp_${name}.txt"
+            else
+               echo "⚠️ Warning: Download or file is empty: $url"
             fi
+            echo "---"
           done
 
-          echo ">>> Processing Local JSON..."
+          # ----------------------------------------------------------------
+          # >>> 2. Processing Local Rules (JSON/YAML)
+          # ----------------------------------------------------------------
+          echo ">>> 2. Processing Local JSON & YAML Rules..."
           if [ -d "$SOURCE_DIR" ]; then
-            shopt -s nullglob
+            
+            # A. 编译 Sing-box JSON (*.json -> .srs)
             for json_file in "$SOURCE_DIR"/*.json; do
               filename=$(basename "$json_file" .json)
+              echo "🔨 Compiling Sing-box JSON: $filename"
               sing-box rule-set compile --output "${OUTPUT_DIR}/${filename}.srs" "$json_file"
+            done
+
+            # B. 编译 Mihomo YAML (*.yaml / *.yml -> .mrs)
+            for yaml_file in "$SOURCE_DIR"/*.yaml "$SOURCE_DIR"/*.yml; do
+              # 移除 yaml/yml 后缀
+              base_name=$(basename "$yaml_file" | sed -E 's/\.y(a)?ml$//') 
+              echo "⚙️ Converting Mihomo YAML: $base_name"
+              # Mihomo YAML 默认用 domain 规则类型
+              mihomo convert-ruleset domain yaml "$yaml_file" "${OUTPUT_DIR}/${base_name}.mrs"
             done
           fi
 
-      - name: Commit and Push
+          # ----------------------------------------------------------------
+          # >>> 3. Processing Mihomo List Rules (按子文件夹区分类型)
+          # ----------------------------------------------------------------
+          
+          # A. Domain 列表 (src/domain/*.list -> .mrs)
+          echo ">>> 3A. Processing Mihomo Domain Lists (src/domain)"
+          if [ -d "$SOURCE_DIR/domain" ]; then
+            for list_file in "$SOURCE_DIR"/domain/*.list; do
+              # 提取自定义文件名
+              filename=$(basename "$list_file" .list)
+              echo "⚙️ Converting Domain LIST: $filename"
+              mihomo convert-ruleset domain text "$list_file" "${OUTPUT_DIR}/${filename}.mrs"
+            done
+          fi
+
+          # B. IP-CIDR 列表 (src/ip/*.list -> .mrs)
+          echo ">>> 3B. Processing Mihomo IPCIDR Lists (src/ip)"
+          if [ -d "$SOURCE_DIR/ip" ]; then
+            for list_file in "$SOURCE_DIR"/ip/*.list; do
+              # 提取自定义文件名
+              filename=$(basename "$list_file" .list)
+              echo "⚙️ Converting IPCIDR LIST: $filename"
+              mihomo convert-ruleset ipcidr text "$list_file" "${OUTPUT_DIR}/${filename}.mrs"
+            done
+          fi
+
+      # 3. 提交成品到仓库
+      - name: Commit and Push changes
         run: |
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
-          git add rule-set/*.srs
-          git commit -m "Update rules [skip ci]" || exit 0
+          # 添加所有 .srs 和 .mrs 文件
+          git add rule-set/*.srs rule-set/*.mrs
+          # 提交 (如果没有变化则跳过)
+          git commit -m "Factory output update [skip ci]" || exit 0
           git push
