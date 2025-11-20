@@ -1,0 +1,79 @@
+name: Rule Factory
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**.json'
+      - '.github/workflows/factory.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  produce-rules:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install sing-box
+        run: |
+          LATEST_VERSION=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
+          VERSION_NUM=${LATEST_VERSION#v}
+          wget "https://github.com/SagerNet/sing-box/releases/download/${LATEST_VERSION}/sing-box-${VERSION_NUM}-linux-amd64.tar.gz"
+          tar -zxvf "sing-box-${VERSION_NUM}-linux-amd64.tar.gz"
+          sudo mv sing-box-*/sing-box /usr/local/bin/
+          sudo chmod +x /usr/local/bin/sing-box
+
+      - name: Run Factory Line
+        run: |
+          SOURCE_DIR="src"
+          OUTPUT_DIR="rule-set"
+          mkdir -p "$OUTPUT_DIR"
+
+          # --- 进货清单 (修改这里) ---
+          # 格式: "URL地址 | 自定义文件名"
+          declare -a REMOTE_FILES=(
+            "https://raw.githubusercontent.com/217heidai/adblockfilters/main/rules/adblockdns.txt | adguard"
+            "https://raw.githubusercontent.com/217heidai/adblockfilters/main/rules/adblockdns.txt | 234"
+          )
+          # -------------------------
+
+          echo ">>> Processing Remote Rules..."
+          for rule in "${REMOTE_FILES[@]}"; do
+            url="${rule%%|*}"
+            name="${rule##*|}"
+            url=$(echo "$url" | xargs)
+            name=$(echo "$name" | xargs)
+
+            echo "Downloading: $name"
+            curl -L -s -o "temp.txt" "$url"
+
+            if [ -f "temp.txt" ]; then
+               sing-box rule-set convert --type adguard --output "${OUTPUT_DIR}/${name}.srs" "temp.txt"
+               rm "temp.txt"
+            fi
+          done
+
+          echo ">>> Processing Local JSON..."
+          if [ -d "$SOURCE_DIR" ]; then
+            shopt -s nullglob
+            for json_file in "$SOURCE_DIR"/*.json; do
+              filename=$(basename "$json_file" .json)
+              sing-box rule-set compile --output "${OUTPUT_DIR}/${filename}.srs" "$json_file"
+            done
+          fi
+
+      - name: Commit and Push
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git add rule-set/*.srs
+          git commit -m "Update rules [skip ci]" || exit 0
+          git push
