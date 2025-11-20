@@ -4,14 +4,9 @@ name: Rule Factory (Sing-box & Mihomo)
 # 触发条件
 # ===============================
 on:
-  # 每天自动运行一次 (国际时间 00:00)
   schedule:
     - cron: '0 0 * * *'
-  
-  # 允许手动在 GitHub 页面上点击运行
   workflow_dispatch:
-  
-  # 当原材料文件有变动时自动触发
   push:
     branches:
       - main
@@ -30,25 +25,32 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      # 1. 安装机器：sing-box 和 mihomo (已添加重试机制)
+      # 1. 安装机器：sing-box 和 mihomo (mihomo 已更新为防 404 逻辑)
       - name: Install Dependencies
         run: |
+          # --- A. 安装 sing-box (保留您确认工作正常的逻辑) ---
           echo "--- Installing sing-box ---"
           S_VERSION=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
           S_VERSION_NUM=${S_VERSION#v}
-          # 添加 --tries=5 允许重试
           wget --tries=5 "https://github.com/SagerNet/sing-box/releases/download/${S_VERSION}/sing-box-${S_VERSION_NUM}-linux-amd64.tar.gz"
           tar -zxvf "sing-box-${S_VERSION_NUM}-linux-amd64.tar.gz"
           sudo mv sing-box-*/sing-box /usr/local/bin/
           sudo chmod +x /usr/local/bin/sing-box
           sing-box version
           
-          echo "--- Installing mihomo ---"
+          # --- B. 安装 mihomo (使用动态查找链接的稳定逻辑) ---
+          echo "--- Installing mihomo (Fixing 404 error) ---"
           M_VERSION=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r .tag_name)
-          M_BIN_NAME="mihomo-linux-amd64-${M_VERSION#v}.gz"
-          # 添加 --tries=5 允许重试
-          wget --tries=5 "https://github.com/MetaCubeX/mihomo/releases/download/${M_VERSION}/${M_BIN_NAME}"
-          gunzip ${M_BIN_NAME}
+          # 通过 API 查找正确的下载 URL，防止文件名变化导致 404
+          M_URL=$(curl -s "https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/${M_VERSION}" | jq -r '.assets[] | select(.name | contains("linux-amd64") and contains(".gz")) | .browser_download_url')
+          
+          if [ -z "$M_URL" ]; then
+            echo "Error: Could not find Mihomo download URL for linux-amd64."
+            exit 1
+          fi
+
+          wget --tries=5 "$M_URL" -O mihomo-download.gz
+          gunzip mihomo-download.gz
           sudo mv mihomo-linux-amd64 /usr/local/bin/mihomo
           sudo chmod +x /usr/local/bin/mihomo
           mihomo -v
@@ -79,7 +81,6 @@ jobs:
             name=$(echo "$name" | xargs)
 
             echo "📥 Downloading: $name"
-            # 添加重试参数
             curl --retry 5 --retry-delay 5 -L -s -o "temp_${name}.txt" "$url"
 
             if [ -f "temp_${name}.txt" ] && [ -s "temp_${name}.txt" ]; then
@@ -93,7 +94,7 @@ jobs:
           done
 
           # ----------------------------------------------------------------
-          # 2. Processing Local JSON & YAML (src 根目录)
+          # 2. Processing Local Rules (src 根目录)
           # ----------------------------------------------------------------
           echo ">>> 2. Processing Local JSON & YAML Rules..."
           if [ -d "$SOURCE_DIR" ]; then
