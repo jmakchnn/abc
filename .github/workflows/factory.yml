@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@v4
       
       # 1. 安装机器：sing-box 和 mihomo (已包含所有网络修复和逻辑修正)
-      - name: Install Dependencies
+- name: Install Dependencies
         run: |
           # --- A. 安装 sing-box (已添加重试) ---
           echo "--- Installing sing-box ---"
@@ -38,12 +38,12 @@ jobs:
           sudo chmod +x /usr/local/bin/sing-box
           sing-box version
           
-          # --- B. 安装 mihomo (已修复 URL 提取错误，确保只下载单个文件) ---
-          echo "--- Installing mihomo (Fixing 404 error) ---"
+          # --- B. 安装 mihomo (已修复 jq 语法错误) ---
+          echo "--- Installing mihomo (Fixing jq error) ---"
           M_VERSION=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r .tag_name)
           
-          # 关键修复: 使用 " | limit(1)" 确保只提取第一个有效的 URL
-          M_URL=$(curl -s "https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/${M_VERSION}" | jq -r '.assets[] | select(.name | contains("linux-amd64") and contains(".gz")) | .browser_download_url | limit(1)')
+          # 关键修复: 使用 [ ... ][0] 取代 limit(1)，确保语法兼容性
+          M_URL=$(curl -s "https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/${M_VERSION}" | jq -r '[.assets[] | select(.name | contains("linux-amd64") and contains(".gz")) | .browser_download_url][0]')
           
           if [ -z "$M_URL" ]; then
             echo "Error: Could not find Mihomo download URL for linux-amd64."
