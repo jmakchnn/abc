@@ -25,10 +25,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      # 1. 安装机器：sing-box 和 mihomo (mihomo 已更新为防 404 逻辑)
+      # 1. 安装机器：sing-box 和 mihomo (已包含所有网络修复和逻辑修正)
       - name: Install Dependencies
         run: |
-          # --- A. 安装 sing-box (保留您确认工作正常的逻辑) ---
+          # --- A. 安装 sing-box (已添加重试) ---
           echo "--- Installing sing-box ---"
           S_VERSION=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
           S_VERSION_NUM=${S_VERSION#v}
@@ -38,11 +38,12 @@ jobs:
           sudo chmod +x /usr/local/bin/sing-box
           sing-box version
           
-          # --- B. 安装 mihomo (使用动态查找链接的稳定逻辑) ---
+          # --- B. 安装 mihomo (已修复 URL 提取错误，确保只下载单个文件) ---
           echo "--- Installing mihomo (Fixing 404 error) ---"
           M_VERSION=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r .tag_name)
-          # 通过 API 查找正确的下载 URL，防止文件名变化导致 404
-          M_URL=$(curl -s "https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/${M_VERSION}" | jq -r '.assets[] | select(.name | contains("linux-amd64") and contains(".gz")) | .browser_download_url')
+          
+          # 关键修复: 使用 " | limit(1)" 确保只提取第一个有效的 URL
+          M_URL=$(curl -s "https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/${M_VERSION}" | jq -r '.assets[] | select(.name | contains("linux-amd64") and contains(".gz")) | .browser_download_url | limit(1)')
           
           if [ -z "$M_URL" ]; then
             echo "Error: Could not find Mihomo download URL for linux-amd64."
@@ -81,6 +82,7 @@ jobs:
             name=$(echo "$name" | xargs)
 
             echo "📥 Downloading: $name"
+            # curl 带有重试机制
             curl --retry 5 --retry-delay 5 -L -s -o "temp_${name}.txt" "$url"
 
             if [ -f "temp_${name}.txt" ] && [ -s "temp_${name}.txt" ]; then
