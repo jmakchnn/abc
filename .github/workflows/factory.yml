@@ -40,8 +40,7 @@ jobs:
           # --- 进货清单 (修改这里) ---
           # 格式: "URL地址 | 自定义文件名"
           declare -a REMOTE_FILES=(
-            "https://raw.githubusercontent.com/217heidai/adblockfilters/main/rules/adblockdns.txt | adguard"
-            "https://raw.githubusercontent.com/217heidai/adblockfilters/main/rules/adblockdns.txt | 234"
+            "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt | AdGuardSDNSFilter"
           )
           # -------------------------
 
