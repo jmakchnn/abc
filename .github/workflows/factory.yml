@@ -25,7 +25,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      # 1. 安装机器：sing-box 和 mihomo (最简洁稳定的下载逻辑)
+      # 1. 安装机器：sing-box 和 mihomo (最终修复 404)
       - name: Install Dependencies
         run: |
           # --- A. 安装 sing-box ---
@@ -38,13 +38,26 @@ jobs:
           sudo chmod +x /usr/local/bin/sing-box
           sing-box version
           
-          # --- B. 安装 mihomo ---
+          # --- B. 安装 mihomo (修复 404 错误: 使用更稳定的 Bash 查找链接) ---
           echo "--- Installing mihomo ---"
           M_VERSION=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r .tag_name)
           
-          # 使用版本号下载
-          wget --tries=5 "https://github.com/MetaCubeX/mihomo/releases/download/${M_VERSION}/mihomo-linux-amd64-${M_VERSION#v}.gz" -O mihomo-download.gz
+          echo "Searching Mihomo download link for ${M_VERSION}..."
+          
+          # 关键修复：使用 curl + grep + sed 替代复杂的 jq 查找，保证兼容性
+          M_URL=$(curl -s "https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/${M_VERSION}" | \
+                  grep -oP '"browser_download_url": "\K[^"]*mihomo-linux-amd64[^"]*\.gz"' | \
+                  head -n 1)
 
+          if [ -z "$M_URL" ]; then
+            echo "Error: Could not find Mihomo download URL for linux-amd64."
+            exit 1
+          fi
+          
+          # 注意：M_URL 已经被双引号包裹了，所以我们需要将其去掉
+          M_URL=${M_URL//\"/}
+
+          wget --tries=5 "$M_URL" -O mihomo-download.gz
           gunzip mihomo-download.gz
 
           # 查找解压后的文件，并赋予执行权限
@@ -133,8 +146,6 @@ jobs:
           if [ -d "$SOURCE_DIR/domain" ] && command -v mihomo &> /dev/null; then
             # 兼容 .list 和 .txt 两种后缀
             for list_file in "$SOURCE_DIR"/domain/*.list "$SOURCE_DIR"/domain/*.txt; do
-              # 只有当 glob 找到了文件时，这个循环才会执行
-              
               # 动态确定文件名 (移除 .list 或 .txt 后缀)
               filename=$(basename "$list_file")
               filename=${filename%.list}
