@@ -25,10 +25,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      # 1. 安装机器：sing-box 和 mihomo (已包含所有网络修复和逻辑修正)
-- name: Install Dependencies
+      # 1. 安装机器：sing-box 和 mihomo (已修复所有网络和 jq 错误)
+      - name: Install Dependencies
         run: |
-          # --- A. 安装 sing-box (已添加重试) ---
+          # --- A. 安装 sing-box ---
           echo "--- Installing sing-box ---"
           S_VERSION=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
           S_VERSION_NUM=${S_VERSION#v}
@@ -38,11 +38,11 @@ jobs:
           sudo chmod +x /usr/local/bin/sing-box
           sing-box version
           
-          # --- B. 安装 mihomo (已修复 jq 语法错误) ---
+          # --- B. 安装 mihomo (已修复 jq 语法错误，使用兼容写法) ---
           echo "--- Installing mihomo (Fixing jq error) ---"
           M_VERSION=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r .tag_name)
           
-          # 关键修复: 使用 [ ... ][0] 取代 limit(1)，确保语法兼容性
+          # 关键修复: 使用 [ ... ][0] 取代 limit(1)，解决 jq 报错
           M_URL=$(curl -s "https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/${M_VERSION}" | jq -r '[.assets[] | select(.name | contains("linux-amd64") and contains(".gz")) | .browser_download_url][0]')
           
           if [ -z "$M_URL" ]; then
@@ -69,6 +69,7 @@ jobs:
           # 格式: "上游链接 | 自定义文件名" (文件名不带后缀)
           declare -a REMOTE_FILES=(
             "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt | AdGuardSDNSFilter"
+            "https://example.com/another-list.txt | custom_ad_list"
           )
           
           # ----------------------------------------------------------------
