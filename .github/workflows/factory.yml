@@ -38,8 +38,8 @@ jobs:
           sudo chmod +x /usr/local/bin/sing-box
           sing-box version
           
-          # --- B. 安装 mihomo (已修复解压后权限问题) ---
-          echo "--- Installing mihomo (Fixing file permission error) ---"
+          # --- B. 安装 mihomo (已修复解压后文件名不确定的问题) ---
+          echo "--- Installing mihomo (Final file name fix) ---"
           M_VERSION=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r .tag_name)
           
           # 查找下载链接，防止 404
@@ -53,17 +53,18 @@ jobs:
           wget --tries=5 "$M_URL" -O mihomo-download.gz
           gunzip mihomo-download.gz
 
-          # 关键修复 1: 查找解压后的文件 (不检查执行权限)
-          M_EXECUTABLE=$(find . -maxdepth 1 -type f -name "mihomo-linux-amd64*" ! -name "*.gz" | head -n 1)
+          # 关键修复：查找所有不带 .gz 的新文件，并假设它是可执行文件
+          M_EXECUTABLE=$(find . -maxdepth 1 -type f ! -name "*.gz" ! -name "mihomo-download" | head -n 1)
 
           if [ -z "$M_EXECUTABLE" ]; then
              echo "Error: Could not find the mihomo executable after unzipping."
+             echo "Listing files in current directory:"
+             ls -la
              exit 1
           fi
           
-          # 关键修复 2: 赋予执行权限
+          # 赋予执行权限并移动
           chmod +x "$M_EXECUTABLE"
-
           sudo mv "$M_EXECUTABLE" /usr/local/bin/mihomo
           mihomo -v
 
@@ -80,7 +81,6 @@ jobs:
           # 格式: "上游链接 | 自定义文件名" (文件名不带后缀)
           declare -a REMOTE_FILES=(
             "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt | AdGuardSDNSFilter"
-            "https://example.com/another-list.txt | custom_ad_list"
           )
           
           # ----------------------------------------------------------------
