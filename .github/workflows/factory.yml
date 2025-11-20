@@ -16,7 +16,7 @@ on:
     branches:
       - main
     paths:
-      - 'src/**'  # 监听 src 目录下的所有文件
+      - 'src/**'
       - '.github/workflows/factory.yml'
 
 permissions:
@@ -30,13 +30,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      # 1. 安装机器：sing-box 和 mihomo
+      # 1. 安装机器：sing-box 和 mihomo (已添加重试机制)
       - name: Install Dependencies
         run: |
           echo "--- Installing sing-box ---"
           S_VERSION=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
           S_VERSION_NUM=${S_VERSION#v}
-          wget "https://github.com/SagerNet/sing-box/releases/download/${S_VERSION}/sing-box-${S_VERSION_NUM}-linux-amd64.tar.gz"
+          # 添加 --tries=5 允许重试
+          wget --tries=5 "https://github.com/SagerNet/sing-box/releases/download/${S_VERSION}/sing-box-${S_VERSION_NUM}-linux-amd64.tar.gz"
           tar -zxvf "sing-box-${S_VERSION_NUM}-linux-amd64.tar.gz"
           sudo mv sing-box-*/sing-box /usr/local/bin/
           sudo chmod +x /usr/local/bin/sing-box
@@ -45,7 +46,8 @@ jobs:
           echo "--- Installing mihomo ---"
           M_VERSION=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r .tag_name)
           M_BIN_NAME="mihomo-linux-amd64-${M_VERSION#v}.gz"
-          wget "https://github.com/MetaCubeX/mihomo/releases/download/${M_VERSION}/${M_BIN_NAME}"
+          # 添加 --tries=5 允许重试
+          wget --tries=5 "https://github.com/MetaCubeX/mihomo/releases/download/${M_VERSION}/${M_BIN_NAME}"
           gunzip ${M_BIN_NAME}
           sudo mv mihomo-linux-amd64 /usr/local/bin/mihomo
           sudo chmod +x /usr/local/bin/mihomo
@@ -55,8 +57,8 @@ jobs:
       - name: Run Factory Line (Process All Rules)
         run: |
           # --- A. 路径配置区 ---
-          SOURCE_DIR="src"       # 原材料文件夹 (包含 json, yaml, domain/, ip/)
-          OUTPUT_DIR="rule-set"  # 成品文件夹 (.srs 和 .mrs 输出到这里)
+          SOURCE_DIR="src"
+          OUTPUT_DIR="rule-set"
           mkdir -p "$OUTPUT_DIR"
           shopt -s nullglob
           
@@ -65,8 +67,10 @@ jobs:
           declare -a REMOTE_FILES=(
             "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt | AdGuardSDNSFilter"
           )
-          # ----------------------------------------------------------------
           
+          # ----------------------------------------------------------------
+          # 1. Processing Remote AdGuard Rules (带重试)
+          # ----------------------------------------------------------------
           echo ">>> 1. Processing Remote AdGuard Rules..."
           for rule in "${REMOTE_FILES[@]}"; do
             url="${rule%%|*}"
@@ -75,8 +79,8 @@ jobs:
             name=$(echo "$name" | xargs)
 
             echo "📥 Downloading: $name"
-            # -s 静默下载, -o 输出到文件
-            curl -L -s -o "temp_${name}.txt" "$url"
+            # 添加重试参数
+            curl --retry 5 --retry-delay 5 -L -s -o "temp_${name}.txt" "$url"
 
             if [ -f "temp_${name}.txt" ] && [ -s "temp_${name}.txt" ]; then
                sing-box rule-set convert --type adguard --output "${OUTPUT_DIR}/${name}.srs" "temp_${name}.txt"
@@ -89,7 +93,7 @@ jobs:
           done
 
           # ----------------------------------------------------------------
-          # >>> 2. Processing Local Rules (JSON/YAML)
+          # 2. Processing Local JSON & YAML (src 根目录)
           # ----------------------------------------------------------------
           echo ">>> 2. Processing Local JSON & YAML Rules..."
           if [ -d "$SOURCE_DIR" ]; then
@@ -103,23 +107,20 @@ jobs:
 
             # B. 编译 Mihomo YAML (*.yaml / *.yml -> .mrs)
             for yaml_file in "$SOURCE_DIR"/*.yaml "$SOURCE_DIR"/*.yml; do
-              # 移除 yaml/yml 后缀
               base_name=$(basename "$yaml_file" | sed -E 's/\.y(a)?ml$//') 
               echo "⚙️ Converting Mihomo YAML: $base_name"
-              # Mihomo YAML 默认用 domain 规则类型
               mihomo convert-ruleset domain yaml "$yaml_file" "${OUTPUT_DIR}/${base_name}.mrs"
             done
           fi
 
           # ----------------------------------------------------------------
-          # >>> 3. Processing Mihomo List Rules (按子文件夹区分类型)
+          # 3. Processing Mihomo List Rules (按子文件夹区分类型)
           # ----------------------------------------------------------------
           
           # A. Domain 列表 (src/domain/*.list -> .mrs)
           echo ">>> 3A. Processing Mihomo Domain Lists (src/domain)"
           if [ -d "$SOURCE_DIR/domain" ]; then
             for list_file in "$SOURCE_DIR"/domain/*.list; do
-              # 提取自定义文件名
               filename=$(basename "$list_file" .list)
               echo "⚙️ Converting Domain LIST: $filename"
               mihomo convert-ruleset domain text "$list_file" "${OUTPUT_DIR}/${filename}.mrs"
@@ -130,7 +131,6 @@ jobs:
           echo ">>> 3B. Processing Mihomo IPCIDR Lists (src/ip)"
           if [ -d "$SOURCE_DIR/ip" ]; then
             for list_file in "$SOURCE_DIR"/ip/*.list; do
-              # 提取自定义文件名
               filename=$(basename "$list_file" .list)
               echo "⚙️ Converting IPCIDR LIST: $filename"
               mihomo convert-ruleset ipcidr text "$list_file" "${OUTPUT_DIR}/${filename}.mrs"
@@ -142,8 +142,6 @@ jobs:
         run: |
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
-          # 添加所有 .srs 和 .mrs 文件
           git add rule-set/*.srs rule-set/*.mrs
-          # 提交 (如果没有变化则跳过)
           git commit -m "Factory output update [skip ci]" || exit 0
           git push
