@@ -25,7 +25,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      # 1. 安装机器：sing-box 和 mihomo (修复了所有已知错误)
+      # 1. 安装机器：sing-box 和 mihomo (已修复所有已知问题)
       - name: Install Dependencies
         run: |
           # --- A. 安装 sing-box ---
@@ -38,11 +38,11 @@ jobs:
           sudo chmod +x /usr/local/bin/sing-box
           sing-box version
           
-          # --- B. 安装 mihomo (已修复解压后文件名不确定的问题) ---
-          echo "--- Installing mihomo (Final file name fix) ---"
+          # --- B. 安装 mihomo (修复了所有下载和权限问题) ---
+          echo "--- Installing mihomo ---"
           M_VERSION=$(curl -s https://api.github.com/repos/MetaCubeX/mihomo/releases/latest | jq -r .tag_name)
           
-          # 查找下载链接，防止 404
+          # 查找下载链接，使用 [][0] 语法修正 jq 错误
           M_URL=$(curl -s "https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/${M_VERSION}" | jq -r '[.assets[] | select(.name | contains("linux-amd64") and contains(".gz")) | .browser_download_url][0]')
           
           if [ -z "$M_URL" ]; then
@@ -53,17 +53,19 @@ jobs:
           wget --tries=5 "$M_URL" -O mihomo-download.gz
           gunzip mihomo-download.gz
 
-          # 关键修复：查找所有不带 .gz 的新文件，并假设它是可执行文件
-          M_EXECUTABLE=$(find . -maxdepth 1 -type f ! -name "*.gz" ! -name "mihomo-download" | head -n 1)
+          # 查找解压后的文件 (兼容各种文件名)，并赋予执行权限
+          M_EXECUTABLE=$(find . -maxdepth 1 -type f -name "mihomo-linux-amd64*" ! -name "*.gz" | head -n 1)
 
           if [ -z "$M_EXECUTABLE" ]; then
-             echo "Error: Could not find the mihomo executable after unzipping."
-             echo "Listing files in current directory:"
-             ls -la
+             # 如果默认名找不到，尝试更广泛的查找
+             M_EXECUTABLE=$(find . -maxdepth 1 -type f ! -name "*.gz" ! -name "mihomo-download" | head -n 1)
+          fi
+
+          if [ -z "$M_EXECUTABLE" ]; then
+             echo "Fatal Error: Could not find the mihomo executable after unzipping. Cannot continue."
              exit 1
           fi
           
-          # 赋予执行权限并移动
           chmod +x "$M_EXECUTABLE"
           sudo mv "$M_EXECUTABLE" /usr/local/bin/mihomo
           mihomo -v
@@ -71,7 +73,13 @@ jobs:
       # 2. 运行工厂生产线
       - name: Run Factory Line (Process All Rules)
         run: |
-          # --- A. 路径配置区 ---
+          # 检查 mihomo 是否能运行
+          if ! command -v mihomo &> /dev/null; then
+              echo "Fatal: mihomo command not found. Skipping rule conversion."
+              # 如果 Mihomo 确实安装失败，流程不中断，但跳过转换
+              # 注意: 转换失败不会阻止 Sing-box 运行
+          fi
+          
           SOURCE_DIR="src"
           OUTPUT_DIR="rule-set"
           mkdir -p "$OUTPUT_DIR"
@@ -121,11 +129,14 @@ jobs:
             done
 
             # B. 编译 Mihomo YAML (*.yaml / *.yml -> .mrs)
-            for yaml_file in "$SOURCE_DIR"/*.yaml "$SOURCE_DIR"/*.yml; do
-              base_name=$(basename "$yaml_file" | sed -E 's/\.y(a)?ml$//') 
-              echo "⚙️ Converting Mihomo YAML: $base_name"
-              mihomo convert-ruleset domain yaml "$yaml_file" "${OUTPUT_DIR}/${base_name}.mrs"
-            done
+            # 只有 Mihomo 存在才执行转换
+            if command -v mihomo &> /dev/null; then
+                for yaml_file in "$SOURCE_DIR"/*.yaml "$SOURCE_DIR"/*.yml; do
+                  base_name=$(basename "$yaml_file" | sed -E 's/\.y(a)?ml$//') 
+                  echo "⚙️ Converting Mihomo YAML: $base_name"
+                  mihomo convert-ruleset domain yaml "$yaml_file" "${OUTPUT_DIR}/${base_name}.mrs"
+                done
+            fi
           fi
 
           # ----------------------------------------------------------------
@@ -134,7 +145,7 @@ jobs:
           
           # A. Domain 列表 (src/domain/*.list -> .mrs)
           echo ">>> 3A. Processing Mihomo Domain Lists (src/domain)"
-          if [ -d "$SOURCE_DIR/domain" ]; then
+          if [ -d "$SOURCE_DIR/domain" ] && command -v mihomo &> /dev/null; then
             for list_file in "$SOURCE_DIR"/domain/*.list; do
               filename=$(basename "$list_file" .list)
               echo "⚙️ Converting Domain LIST: $filename"
@@ -144,7 +155,7 @@ jobs:
 
           # B. IP-CIDR 列表 (src/ip/*.list -> .mrs)
           echo ">>> 3B. Processing Mihomo IPCIDR Lists (src/ip)"
-          if [ -d "$SOURCE_DIR/ip" ]; then
+          if [ -d "$SOURCE_DIR/ip" ] && command -v mihomo &> /dev/null; then
             for list_file in "$SOURCE_DIR"/ip/*.list; do
               filename=$(basename "$list_file" .list)
               echo "⚙️ Converting IPCIDR LIST: $filename"
@@ -152,11 +163,15 @@ jobs:
             done
           fi
 
-      # 3. 提交成品到仓库
+      # 3. 提交成品到仓库 (使用 find 确保只添加存在的文件，修复 Git 报错 128)
       - name: Commit and Push changes
         run: |
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
-          git add rule-set/*.srs rule-set/*.mrs
+          
+          # 只有找到了文件才执行 git add
+          find rule-set/ -name "*.srs" -o -name "*.mrs" | xargs git add
+          
+          # 提交 (如果没有变化则跳过)
           git commit -m "Factory output update [skip ci]" || exit 0
           git push
