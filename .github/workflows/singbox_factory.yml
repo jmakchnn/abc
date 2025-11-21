@@ -1,0 +1,99 @@
+name: Sing-box Rule Factory
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - '.github/workflows/singbox_factory.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  produce-srs-rules:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # 1. 安装 Sing-box (修复为硬编码版本，确保稳定)
+      - name: Install Sing-box
+        run: |
+          echo "--- Installing sing-box ---"
+          # 使用稳定版本号，避免版本号解析失败
+          S_VERSION_NUM="1.4.1" 
+          wget --tries=5 "https://github.com/SagerNet/sing-box/releases/download/v${S_VERSION_NUM}/sing-box-${S_VERSION_NUM}-linux-amd64.tar.gz" -O sing-box.tar.gz
+          tar -zxvf sing-box.tar.gz
+          sudo mv sing-box-*/sing-box /usr/local/bin/
+          sudo chmod +x /usr/local/bin/sing-box
+          sing-box version
+
+      # 2. 运行工厂生产线
+      - name: Run Sing-box Factory
+        run: |
+          SOURCE_DIR="src"
+          OUTPUT_DIR="rule-set"
+          mkdir -p "$OUTPUT_DIR"
+          shopt -s nullglob
+          
+          # --- A. 远程进货清单 (AdGuard 转换) ---
+          declare -a REMOTE_FILES=(
+            "https://raw.githubusercontent.com/217heidai/adblockfilters/main/rules/adblockdns.txt | adguard"
+            "https://example.com/another-list.txt | custom_ad_list"
+          )
+          
+          # ----------------------------------------------------------------
+          # 1. Processing Remote AdGuard Rules
+          # ----------------------------------------------------------------
+          echo ">>> 1. Processing Remote AdGuard Rules..."
+          for rule in "${REMOTE_FILES[@]}"; do
+            url="${rule%%|*}"
+            name="${rule##*|}"
+            url=$(echo "$url" | xargs)
+            name=$(echo "$name" | xargs)
+
+            echo "📥 Downloading: $name"
+            curl --retry 5 --retry-delay 5 -L -s -o "temp_${name}.txt" "$url"
+
+            if [ -f "temp_${name}.txt" ] && [ -s "temp_${name}.txt" ]; then
+               sing-box rule-set convert --type adguard --output "${OUTPUT_DIR}/${name}.srs" "temp_${name}.txt" || echo "⚠️ Warning: sing-box conversion failed for ${name}"
+               echo "✅ Success: ${name}.srs"
+               rm "temp_${name}.txt"
+            else
+               echo "⚠️ Warning: Download or file is empty: $url"
+            fi
+            echo "---"
+          done
+
+          # ----------------------------------------------------------------
+          # 2. Processing Local JSON Rules
+          # ----------------------------------------------------------------
+          echo ">>> 2. Processing Local JSON Rules..."
+          if [ -d "$SOURCE_DIR" ]; then
+            for json_file in "$SOURCE_DIR"/*.json; do
+              filename=$(basename "$json_file" .json)
+              echo "🔨 Compiling Sing-box JSON: $filename"
+              sing-box rule-set compile --output "${OUTPUT_DIR}/${filename}.srs" "$json_file" || echo "⚠️ Warning: sing-box compilation failed for ${filename}"
+            done
+          fi
+          
+          # 🐞 最终调试点：打印成品目录内容
+          echo "--- Debug: Final Contents of rule-set/ directory ---"
+          ls -la "$OUTPUT_DIR/"
+          echo "----------------------------------------------------"
+
+      # 3. 提交成品到仓库 
+      - name: Commit and Push changes
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          
+          # 只添加 .srs 文件
+          find rule-set/ -name "*.srs" | xargs git add
+          
+          git commit -m "Sing-box Factory output update [skip ci]" || exit 0
+          git push
