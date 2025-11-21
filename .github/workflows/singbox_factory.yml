@@ -42,8 +42,7 @@ jobs:
           
           # --- A. 远程进货清单 (AdGuard 转换) ---
           declare -a REMOTE_FILES=(
-            "https://raw.githubusercontent.com/217heidai/adblockfilters/main/rules/adblockdns.txt | adguard"
-            "https://example.com/another-list.txt | custom_ad_list"
+            "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt | AdGuardSDNSFilter"
           )
           
           # ----------------------------------------------------------------
