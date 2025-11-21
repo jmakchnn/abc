@@ -25,7 +25,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      # 1. 安装机器：sing-box 和 mihomo (硬编码版本，回归简洁)
+      # 1. 安装机器：sing-box 和 mihomo (硬编码链接，最简单维护)
       - name: Install Dependencies
         run: |
           # --- A. 安装 sing-box (保持自动最新，因为它稳定) ---
@@ -38,19 +38,19 @@ jobs:
           sudo chmod +x /usr/local/bin/sing-box
           sing-box version
           
-          # --- B. 安装 mihomo (使用硬编码版本，手动更新) ---
+          # --- B. 安装 mihomo (使用硬编码完整链接) ---
           echo "--- Installing mihomo ---"
-          # !!! 核心修正: 手动指定版本号和文件链接，避免文件名查找的复杂性
-          M_VERSION="v1.19.16" # <--- 未来更新版本，只需改这里
-          M_FILE="mihomo-linux-amd64-${M_VERSION#v}.gz" # 当前版本的文件名格式
-
-          echo "Downloading Mihomo version ${M_VERSION}..."
           
-          wget --tries=5 "https://github.com/MetaCubeX/mihomo/releases/download/${M_VERSION}/${M_FILE}" -O mihomo-download.gz
+          # !!! 核心修正: 粘贴完整的下载链接，未来只需手动替换 M_URL 的值即可
+          M_URL="https://github.com/MetaCubeX/mihomo/releases/download/v1.19.16/mihomo-linux-amd64-v1.19.16.gz" # <-- 请在升级时手动替换此链接
 
-          # 检查下载是否成功（避免 404 导致后续步骤失败）
+          echo "Downloading Mihomo from hard-coded URL..."
+          
+          wget --tries=5 "$M_URL" -O mihomo-download.gz
+
+          # 检查下载是否成功
           if [ $? -ne 0 ]; then
-             echo "Fatal Error: Mihomo download failed. Please check M_VERSION (${M_VERSION}) and M_FILE (${M_FILE}) in the workflow."
+             echo "Fatal Error: Mihomo download failed with 404. 请手动检查并更新 M_URL 链接是否正确。"
              exit 1
           fi
 
