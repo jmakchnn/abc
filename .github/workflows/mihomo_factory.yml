@@ -1,0 +1,115 @@
+name: Mihomo Rule Factory (Direct Commit)
+
+# ===============================
+# 触发条件 
+# ===============================
+on:
+  schedule:
+    - cron: '30 0 * * *' # 每天 UTC 00:30 运行 (保留，以备未来远程规则更新)
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - '.github/workflows/mihomo_factory.yml'
+
+permissions:
+  contents: write # 必须有写入权限才能提交
+
+jobs:
+  produce-mrs-rules:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # 1. 核心步骤：只安装 mihomo (硬编码链接，避免 404)
+      - name: Install Mihomo Only
+        run: |
+          echo "--- Installing mihomo ---"
+          M_URL="https://github.com/MetaCubeX/mihomo/releases/download/v1.19.16/mihomo-linux-amd64-v1.19.16.gz"
+
+          echo "Downloading Mihomo from hard-coded URL..."
+          wget --tries=5 "$M_URL" -O mihomo-download.gz
+          if [ $? -ne 0 ]; then
+             echo "Fatal Error: Mihomo download failed with 404. Cannot continue."
+             exit 1
+          fi
+
+          gunzip mihomo-download.gz
+          M_EXECUTABLE=$(find . -maxdepth 1 -type f -name "mihomo-linux-amd64*" ! -name "*.gz" | head -n 1)
+          if [ -z "$M_EXECUTABLE" ]; then
+             echo "Fatal Error: Could not find the mihomo executable after unzipping."
+             exit 1
+          fi
+          
+          chmod +x "$M_EXECUTABLE"
+          sudo mv "$M_EXECUTABLE" /usr/local/bin/mihomo
+          mihomo -v
+
+      # 2. 运行 Mihomo 转换 (使用绝对路径修复)
+      - name: Run Mihomo Conversions (Absolute Paths FIX)
+        run: |
+          SOURCE_DIR="src"
+          OUTPUT_DIR="rule-set"
+          # 核心修复: 使用 GITHUB_WORKSPACE 绝对路径
+          WORKSPACE_DIR="${{ github.workspace }}" 
+          mkdir -p "$OUTPUT_DIR"
+          shopt -s nullglob
+          
+          # --- A. Domain 列表 (src/domain/*.list & *.txt -> .mrs) ---
+          echo ">>> 1. Processing Mihomo Domain Lists (src/domain)"
+          if [ -d "$SOURCE_DIR/domain" ]; then
+            for list_file in "$SOURCE_DIR"/domain/*.list "$SOURCE_DIR"/domain/*.txt; do
+              filename=$(basename "$list_file")
+              filename=${filename%.list}
+              filename=${filename%.txt}
+              
+              echo "⚙️ Converting Domain LIST: $filename (Source: $list_file)"
+              
+              # 【绝对路径修复】 Mihomo 找不到文件的关键
+              INPUT_PATH="${WORKSPACE_DIR}/${list_file}"
+              OUTPUT_PATH="${WORKSPACE_DIR}/rule-set/${filename}.mrs"
+              
+              mihomo convert-ruleset domain text "$INPUT_PATH" "$OUTPUT_PATH" || echo "⚠️ Warning: mihomo domain list conversion failed for ${filename}. Check logs for error detail."
+            done
+          fi
+
+          # --- B. IP-CIDR 列表 (src/ip/*.list & *.txt -> .mrs) ---
+          echo ">>> 2. Processing Mihomo IPCIDR Lists (src/ip)"
+          if [ -d "$SOURCE_DIR/ip" ]; then
+            for list_file in "$SOURCE_DIR"/ip/*.list "$SOURCE_DIR"/ip/*.txt; do
+              filename=$(basename "$list_file")
+              filename=${filename%.list}
+              filename=${filename%.txt}
+              
+              echo "⚙️ Converting IPCIDR LIST: $filename"
+              
+              # 【绝对路径修复】 Mihomo 找不到文件的关键
+              INPUT_PATH="${WORKSPACE_DIR}/${list_file}"
+              OUTPUT_PATH="${WORKSPACE_DIR}/rule-set/${filename}.mrs"
+
+              mihomo convert-ruleset ipcidr text "$INPUT_PATH" "$OUTPUT_PATH" || echo "⚠️ Warning: mihomo ipcidr conversion failed for ${filename}. Check logs for error detail."
+              
+            done
+          fi
+          
+          echo "--- Final Rule-set Contents ---"
+          ls -la "$OUTPUT_DIR/"
+          echo "-------------------------------"
+
+      # 3. 核心步骤：提交产物到仓库 (使用强推，克服 Git 冲突)
+      - name: Commit and Push changes
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          
+          find rule-set/ -name "*.mrs" | xargs git add
+          
+          # 核心修复 1: 必须先提交本地更改
+          git commit -m "Mihomo Factory output update [skip ci]" || exit 0
+          
+          # 核心修复 2: 使用 --force-with-lease 解决 Git 冲突，确保文件被推送到 rule-set/
+          git push --force-with-lease
