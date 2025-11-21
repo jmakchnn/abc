@@ -25,42 +25,39 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-# 1. 核心步骤：只安装 mihomo (终极修复文件名匹配问题)
+# 1. 核心步骤：只安装 mihomo (终极修复文件名匹配和文件路径问题)
       - name: Install Mihomo Only
         run: |
           echo "--- Installing mihomo ---"
-          M_URL="https://github.com/MetaCubeX/mihomo/releases/download/v1.19.16/mihomo-linux-amd64-v1.19.16.gz"
-          M_FILENAME="mihomo-linux-amd64-v1.19.16" # 目标文件名
+          M_VERSION="v1.19.16"
+          M_URL="https://github.com/MetaCubeX/mihomo/releases/download/${M_VERSION}/mihomo-linux-amd64-${M_VERSION}.gz"
+          M_PREFIX="mihomo-linux-amd64"
 
-          echo "Downloading Mihomo to /tmp directory..."
-          # 下载到 /tmp 目录，避免污染工作空间
-          wget --tries=5 "$M_URL" -O /tmp/mihomo-download.gz
+          echo "Downloading Mihomo to current directory..."
+          # 下载到当前工作目录
+          wget --tries=5 "$M_URL" -O mihomo.gz
 
           if [ $? -ne 0 ]; then
              echo "Fatal Error: Mihomo download failed. Cannot continue."
              exit 1
           fi
 
-          echo "Attempting to gunzip and force rename..."
+          echo "Decompressing and locating executable..."
           
           # 1. 解压文件
-          gunzip /tmp/mihomo-download.gz
+          gunzip mihomo.gz
           
-          # 2. 找到解压后的文件（它应该与下载链接中的名字一致）
-          # 我们不使用 find，直接依赖文件名
-          
-          # 3. 核心修复：移动并重命名，确保最终名称为 mihomo
-          if [ -f "/tmp/$M_FILENAME" ]; then
-              chmod +x "/tmp/$M_FILENAME"
-              sudo mv "/tmp/$M_FILENAME" /usr/local/bin/mihomo
-          elif [ -f "$M_FILENAME" ]; then
-              # 如果解压到了工作空间根目录
-              chmod +x "$M_FILENAME"
-              sudo mv "$M_FILENAME" /usr/local/bin/mihomo
-          else
-              echo "Fatal Error: Final mihomo executable ($M_FILENAME) not found after decompression."
-              exit 1
+          # 2. 核心修复：使用 find 命令（最通用的方式）精确查找并设置可执行权限
+          M_EXECUTABLE=$(find . -maxdepth 1 -type f -name "${M_PREFIX}*" ! -name "*.gz" | head -n 1)
+
+          if [ -z "$M_EXECUTABLE" ]; then
+             echo "Fatal Error: Could not find the mihomo executable after decompression."
+             exit 1
           fi
+          
+          # 3. 移动并重命名，确保最终名称为 mihomo
+          chmod +x "$M_EXECUTABLE"
+          sudo mv "$M_EXECUTABLE" /usr/local/bin/mihomo
           
           mihomo -v
 
