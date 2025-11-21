@@ -25,28 +25,42 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      # 1. 核心步骤：只安装 mihomo (硬编码链接，避免 404)
+# 1. 核心步骤：只安装 mihomo (修复文件名匹配问题)
       - name: Install Mihomo Only
         run: |
           echo "--- Installing mihomo ---"
           M_URL="https://github.com/MetaCubeX/mihomo/releases/download/v1.19.16/mihomo-linux-amd64-v1.19.16.gz"
 
           echo "Downloading Mihomo from hard-coded URL..."
-          wget --tries=5 "$M_URL" -O mihomo-download.gz
+          wget --tries=5 "$M_URL" -O mihomo.gz # 简化下载名称
+
           if [ $? -ne 0 ]; then
-             echo "Fatal Error: Mihomo download failed with 404. Cannot continue."
+             echo "Fatal Error: Mihomo download failed. Cannot continue."
              exit 1
           fi
 
-          gunzip mihomo-download.gz
-          M_EXECUTABLE=$(find . -maxdepth 1 -type f -name "mihomo-linux-amd64*" ! -name "*.gz" | head -n 1)
-          if [ -z "$M_EXECUTABLE" ]; then
-             echo "Fatal Error: Could not find the mihomo executable after unzipping."
-             exit 1
+          gunzip mihomo.gz # 解压文件，文件名将变成 mihomo
+
+          # 核心修复: 直接移动并重命名为 mihomo，绕过复杂的 find 匹配
+          if [ -f "mihomo-linux-amd64-v1.19.16" ]; then
+             M_EXECUTABLE="mihomo-linux-amd64-v1.19.16"
+          elif [ -f "mihomo-linux-amd64" ]; then
+             M_EXECUTABLE="mihomo-linux-amd64"
+          else
+             # 如果文件名无法预测，我们使用 find 并在 find 结果上进行后续操作
+             M_EXECUTABLE=$(find . -maxdepth 1 -type f -name "mihomo-linux-amd64*" ! -name "*.gz" | head -n 1)
+             if [ -z "$M_EXECUTABLE" ]; then
+                echo "Fatal Error: Could not find the mihomo executable after unzipping."
+                exit 1
+             fi
           fi
           
+          # 确保找到的文件是可执行的
           chmod +x "$M_EXECUTABLE"
+          
+          # 移动到 /usr/local/bin 并重命名为 mihomo
           sudo mv "$M_EXECUTABLE" /usr/local/bin/mihomo
+          
           mihomo -v
 
       # 2. 运行 Mihomo 转换 (使用绝对路径修复)
