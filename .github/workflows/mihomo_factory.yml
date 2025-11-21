@@ -1,7 +1,7 @@
 name: Mihomo Rule Factory (Docker Stable)
 
 # ===============================
-# 触发条件 
+# 触发条件 (已精确分离)
 # ===============================
 on:
   schedule:
@@ -11,7 +11,9 @@ on:
     branches:
       - main
     paths:
-      - 'src/**'
+      # Mihomo 只需要监听列表文件 (Domain/IP-CIDR) 的变化
+      - 'src/domain/**'
+      - 'src/ip/**'
       - '.github/workflows/mihomo_factory.yml'
 
 permissions:
@@ -26,7 +28,7 @@ jobs:
         uses: actions/checkout@v4
       
       # 1. 核心步骤：使用 Mihomo 官方 Docker 镜像执行转换
-      - name: Run Mihomo Conversions using Docker
+      - name: Run Mihomo Conversions using Docker (Permission FIX)
         run: |
           SOURCE_DIR="src"
           OUTPUT_DIR="rule-set"
@@ -34,43 +36,37 @@ jobs:
           mkdir -p "$OUTPUT_DIR"
           shopt -s nullglob
           
-          # 定义 Docker 命令的固定前缀，挂载工作目录到容器内的 /workspace
-          DOCKER_RUN_PREFIX="docker run --rm -v ${{ github.workspace }}:/workspace metacu/mihomo"
+          # 【修复】添加 --user 选项，解决静默失败（写入权限）问题
+          DOCKER_RUN_PREFIX="docker run --rm -v ${{ github.workspace }}:/workspace --user $(id -u):$(id -g) metacu/mihomo"
           
           # --- A. Domain 列表 (src/domain/*.list & *.txt -> .mrs) ---
           echo ">>> 1. Processing Mihomo Domain Lists (src/domain)"
+          # ... (转换逻辑保持不变)
           if [ -d "$SOURCE_DIR/domain" ]; then
             for list_file in "$SOURCE_DIR"/domain/*.list "$SOURCE_DIR"/domain/*.txt; do
               filename=$(basename "$list_file")
               filename=${filename%.list}
               filename=${filename%.txt}
               
-              echo "⚙️ Converting Domain LIST: $filename"
-              
-              # 【修复】使用 Docker 内部的绝对路径 /workspace/...
               INPUT_PATH="/workspace/${list_file}"
               OUTPUT_PATH="/workspace/rule-set/${filename}.mrs"
               
-              # 在 Docker 容器内执行转换
               $DOCKER_RUN_PREFIX convert-ruleset domain text "$INPUT_PATH" "$OUTPUT_PATH" || echo "⚠️ Warning: mihomo conversion failed for ${filename}. Check logs for error detail."
             done
           fi
 
           # --- B. IP-CIDR 列表 (src/ip/*.list & *.txt -> .mrs) ---
           echo ">>> 2. Processing Mihomo IPCIDR Lists (src/ip)"
+          # ... (转换逻辑保持不变)
           if [ -d "$SOURCE_DIR/ip" ]; then
             for list_file in "$SOURCE_DIR"/ip/*.list "$SOURCE_DIR"/ip/*.txt; do
               filename=$(basename "$list_file")
               filename=${filename%.list}
               filename=${filename%.txt}
               
-              echo "⚙️ Converting IPCIDR LIST: $filename"
-              
-              # 【修复】使用 Docker 内部的绝对路径 /workspace/...
               INPUT_PATH="/workspace/${list_file}"
               OUTPUT_PATH="/workspace/rule-set/${filename}.mrs"
 
-              # 在 Docker 容器内执行转换
               $DOCKER_RUN_PREFIX convert-ruleset ipcidr text "$INPUT_PATH" "$OUTPUT_PATH" || echo "⚠️ Warning: mihomo conversion failed for ${filename}. Check logs for error detail."
               
             done
