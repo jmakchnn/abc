@@ -20,17 +20,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      # 1. 安装 Sing-box (修复为硬编码版本，确保稳定)
+      # 1. 安装 Sing-box (修复为硬编码版本 1.12.12)
       - name: Install Sing-box
         run: |
           echo "--- Installing sing-box ---"
-          # 使用稳定版本号，避免版本号解析失败
+          # 核心修复：使用最新的稳定版本号
           S_VERSION_NUM="1.12.12" 
           wget --tries=5 "https://github.com/SagerNet/sing-box/releases/download/v${S_VERSION_NUM}/sing-box-${S_VERSION_NUM}-linux-amd64.tar.gz" -O sing-box.tar.gz
           tar -zxvf sing-box.tar.gz
           sudo mv sing-box-*/sing-box /usr/local/bin/
           sudo chmod +x /usr/local/bin/sing-box
-          sing-box version
+          sing-box version 
 
       # 2. 运行工厂生产线
       - name: Run Sing-box Factory
@@ -76,7 +76,7 @@ jobs:
             for json_file in "$SOURCE_DIR"/*.json; do
               filename=$(basename "$json_file" .json)
               echo "🔨 Compiling Sing-box JSON: $filename"
-              sing-box rule-set compile --output "${OUTPUT_DIR}/${filename}.srs" "$json_file" || echo "⚠️ Warning: sing-box compilation failed for ${filename}"
+              sing-box rule-set compile --output "${OUTPUT_DIR}/${filename}.srs" "$json_file" || echo "⚠️ Warning: sing-box compilation failed for ${filename}. Check logs for error detail."
             done
           fi
           
@@ -85,14 +85,16 @@ jobs:
           ls -la "$OUTPUT_DIR/"
           echo "----------------------------------------------------"
 
-      # 3. 提交成品到仓库 
+      # 3. 提交成品到仓库 (核心修复 Git 冲突问题)
       - name: Commit and Push changes
         run: |
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
           
-          # 只添加 .srs 文件
           find rule-set/ -name "*.srs" | xargs git add
+          
+          # 【核心修复】解决远程拒绝推送的问题：先拉取最新代码并与本地提交合并
+          git pull --rebase origin main 
           
           git commit -m "Sing-box Factory output update [skip ci]" || exit 0
           git push
