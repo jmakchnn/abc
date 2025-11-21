@@ -1,11 +1,11 @@
-name: Mihomo Rule Factory (Direct Commit)
+name: Mihomo Rule Factory (Docker Stable)
 
 # ===============================
 # 触发条件 
 # ===============================
 on:
   schedule:
-    - cron: '30 0 * * *' # 每天 UTC 00:30 运行 (保留，以备未来远程规则更新)
+    - cron: '30 0 * * *' 
   workflow_dispatch:
   push:
     branches:
@@ -15,7 +15,7 @@ on:
       - '.github/workflows/mihomo_factory.yml'
 
 permissions:
-  contents: write # 必须有写入权限才能提交
+  contents: write
 
 jobs:
   produce-mrs-rules:
@@ -25,51 +25,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-# 1. 核心步骤：只安装 mihomo (终极修复文件名匹配和文件路径问题)
-      - name: Install Mihomo Only
-        run: |
-          echo "--- Installing mihomo ---"
-          M_VERSION="v1.19.16"
-          M_URL="https://github.com/MetaCubeX/mihomo/releases/download/${M_VERSION}/mihomo-linux-amd64-${M_VERSION}.gz"
-          M_PREFIX="mihomo-linux-amd64"
-
-          echo "Downloading Mihomo to current directory..."
-          # 下载到当前工作目录
-          wget --tries=5 "$M_URL" -O mihomo.gz
-
-          if [ $? -ne 0 ]; then
-             echo "Fatal Error: Mihomo download failed. Cannot continue."
-             exit 1
-          fi
-
-          echo "Decompressing and locating executable..."
-          
-          # 1. 解压文件
-          gunzip mihomo.gz
-          
-          # 2. 核心修复：使用 find 命令（最通用的方式）精确查找并设置可执行权限
-          M_EXECUTABLE=$(find . -maxdepth 1 -type f -name "${M_PREFIX}*" ! -name "*.gz" | head -n 1)
-
-          if [ -z "$M_EXECUTABLE" ]; then
-             echo "Fatal Error: Could not find the mihomo executable after decompression."
-             exit 1
-          fi
-          
-          # 3. 移动并重命名，确保最终名称为 mihomo
-          chmod +x "$M_EXECUTABLE"
-          sudo mv "$M_EXECUTABLE" /usr/local/bin/mihomo
-          
-          mihomo -v
-
-      # 2. 运行 Mihomo 转换 (使用绝对路径修复)
-      - name: Run Mihomo Conversions (Absolute Paths FIX)
+      # 1. 核心步骤：使用 Mihomo 官方 Docker 镜像执行转换
+      - name: Run Mihomo Conversions using Docker
         run: |
           SOURCE_DIR="src"
           OUTPUT_DIR="rule-set"
-          # 核心修复: 使用 GITHUB_WORKSPACE 绝对路径
-          WORKSPACE_DIR="${{ github.workspace }}" 
+          
           mkdir -p "$OUTPUT_DIR"
           shopt -s nullglob
+          
+          # 定义 Docker 命令的固定前缀，挂载工作目录到容器内的 /workspace
+          DOCKER_RUN_PREFIX="docker run --rm -v ${{ github.workspace }}:/workspace metacu/mihomo"
           
           # --- A. Domain 列表 (src/domain/*.list & *.txt -> .mrs) ---
           echo ">>> 1. Processing Mihomo Domain Lists (src/domain)"
@@ -79,13 +45,14 @@ jobs:
               filename=${filename%.list}
               filename=${filename%.txt}
               
-              echo "⚙️ Converting Domain LIST: $filename (Source: $list_file)"
+              echo "⚙️ Converting Domain LIST: $filename"
               
-              # 【绝对路径修复】 Mihomo 找不到文件的关键
-              INPUT_PATH="${WORKSPACE_DIR}/${list_file}"
-              OUTPUT_PATH="${WORKSPACE_DIR}/rule-set/${filename}.mrs"
+              # 【修复】使用 Docker 内部的绝对路径 /workspace/...
+              INPUT_PATH="/workspace/${list_file}"
+              OUTPUT_PATH="/workspace/rule-set/${filename}.mrs"
               
-              mihomo convert-ruleset domain text "$INPUT_PATH" "$OUTPUT_PATH" || echo "⚠️ Warning: mihomo domain list conversion failed for ${filename}. Check logs for error detail."
+              # 在 Docker 容器内执行转换
+              $DOCKER_RUN_PREFIX convert-ruleset domain text "$INPUT_PATH" "$OUTPUT_PATH" || echo "⚠️ Warning: mihomo conversion failed for ${filename}. Check logs for error detail."
             done
           fi
 
@@ -99,11 +66,12 @@ jobs:
               
               echo "⚙️ Converting IPCIDR LIST: $filename"
               
-              # 【绝对路径修复】 Mihomo 找不到文件的关键
-              INPUT_PATH="${WORKSPACE_DIR}/${list_file}"
-              OUTPUT_PATH="${WORKSPACE_DIR}/rule-set/${filename}.mrs"
+              # 【修复】使用 Docker 内部的绝对路径 /workspace/...
+              INPUT_PATH="/workspace/${list_file}"
+              OUTPUT_PATH="/workspace/rule-set/${filename}.mrs"
 
-              mihomo convert-ruleset ipcidr text "$INPUT_PATH" "$OUTPUT_PATH" || echo "⚠️ Warning: mihomo ipcidr conversion failed for ${filename}. Check logs for error detail."
+              # 在 Docker 容器内执行转换
+              $DOCKER_RUN_PREFIX convert-ruleset ipcidr text "$INPUT_PATH" "$OUTPUT_PATH" || echo "⚠️ Warning: mihomo conversion failed for ${filename}. Check logs for error detail."
               
             done
           fi
@@ -112,7 +80,7 @@ jobs:
           ls -la "$OUTPUT_DIR/"
           echo "-------------------------------"
 
-      # 3. 核心步骤：提交产物到仓库 (使用强推，克服 Git 冲突)
+      # 2. 提交产物到仓库 (使用强推，克服 Git 冲突)
       - name: Commit and Push changes
         run: |
           git config --local user.email "actions@github.com"
@@ -120,8 +88,6 @@ jobs:
           
           find rule-set/ -name "*.mrs" | xargs git add
           
-          # 核心修复 1: 必须先提交本地更改
           git commit -m "Mihomo Factory output update [skip ci]" || exit 0
           
-          # 核心修复 2: 使用 --force-with-lease 解决 Git 冲突，确保文件被推送到 rule-set/
           git push --force-with-lease
