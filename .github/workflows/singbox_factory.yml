@@ -1,7 +1,15 @@
 name: Sing-box Rule Factory
 
+# ===============================
+# 触发条件 (已添加每日定时更新)
+# ===============================
 on:
+  # 核心修复 1: 添加定时任务，每天 UTC 00:00 运行一次
+  schedule:
+    - cron: '0 0 * * *'  
+  # 保留：手动运行
   workflow_dispatch:
+  # 保留：代码推送触发
   push:
     branches:
       - main
@@ -59,7 +67,7 @@ jobs:
             curl --retry 5 --retry-delay 5 -L -s -o "temp_${name}.txt" "$url"
 
             if [ -f "temp_${name}.txt" ] && [ -s "temp_${name}.txt" ]; then
-               sing-box rule-set convert --type adguard --output "${OUTPUT_DIR}/${name}.srs" "temp_${name}.txt" || echo "⚠️ Warning: sing-box conversion failed for ${name}"
+               sing-box rule-set convert --type adguard --output "${OUTPUT_DIR}/${name}.srs" "temp_${name}.txt" || echo "⚠️ Warning: sing-box conversion failed for ${name}. Check logs for error detail."
                echo "✅ Success: ${name}.srs"
                rm "temp_${name}.txt"
             else
@@ -85,7 +93,7 @@ jobs:
           ls -la "$OUTPUT_DIR/"
           echo "----------------------------------------------------"
 
-      # 3. 提交成品到仓库 (核心修复 Git 冲突问题)
+      # 3. 提交成品到仓库 (Git 冲突问题已修复)
       - name: Commit and Push changes
         run: |
           git config --local user.email "actions@github.com"
@@ -93,8 +101,11 @@ jobs:
           
           find rule-set/ -name "*.srs" | xargs git add
           
-          # 【核心修复】解决远程拒绝推送的问题：先拉取最新代码并与本地提交合并
+          # 核心修复 1: 必须先提交本地更改，否则 git pull --rebase 会失败
+          git commit -m "Sing-box Factory output update [skip ci]" || exit 0
+          
+          # 核心修复 2: 拉取最新代码并与本地提交合并，解决远程拒绝推送的问题
           git pull --rebase origin main 
           
-          git commit -m "Sing-box Factory output update [skip ci]" || exit 0
+          # 核心修复 3: 执行最终推送
           git push
