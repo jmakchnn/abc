@@ -4,7 +4,7 @@ name: Sing-box Rule Factory
 # 触发条件 (已添加每日定时更新)
 # ===============================
 on:
-  # 核心修复 1: 添加定时任务，每天 UTC 00:00 运行一次
+  # 核心功能：定时任务，每天 UTC 00:00 运行一次
   schedule:
     - cron: '0 0 * * *'  
   # 保留：手动运行
@@ -93,7 +93,7 @@ jobs:
           ls -la "$OUTPUT_DIR/"
           echo "----------------------------------------------------"
 
-      # 3. 提交成品到仓库 (Git 冲突问题已修复)
+      # 3. 提交成品到仓库 (核心修复 Git 冲突问题)
       - name: Commit and Push changes
         run: |
           git config --local user.email "actions@github.com"
@@ -101,11 +101,8 @@ jobs:
           
           find rule-set/ -name "*.srs" | xargs git add
           
-          # 核心修复 1: 必须先提交本地更改，否则 git pull --rebase 会失败
+          # 核心修复 1: 必须先提交本地更改
           git commit -m "Sing-box Factory output update [skip ci]" || exit 0
           
-          # 核心修复 2: 拉取最新代码并与本地提交合并，解决远程拒绝推送的问题
-          git pull --rebase origin main 
-          
-          # 核心修复 3: 执行最终推送
-          git push
+          # 核心修复 2: 使用 --force-with-lease 解决 fetch first 冲突，确保自动化提交成功
+          git push --force-with-lease
