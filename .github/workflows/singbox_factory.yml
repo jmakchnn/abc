@@ -25,7 +25,7 @@ jobs:
         run: |
           echo "--- Installing sing-box ---"
           # 使用稳定版本号，避免版本号解析失败
-          S_VERSION_NUM="1.4.1" 
+          S_VERSION_NUM="1.12.12" 
           wget --tries=5 "https://github.com/SagerNet/sing-box/releases/download/v${S_VERSION_NUM}/sing-box-${S_VERSION_NUM}-linux-amd64.tar.gz" -O sing-box.tar.gz
           tar -zxvf sing-box.tar.gz
           sudo mv sing-box-*/sing-box /usr/local/bin/
