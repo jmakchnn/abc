@@ -1,17 +1,17 @@
-name: Mihomo Rule Factory (Docker Stable)
+name: Mihomo Rule Factory (Docker Final)
 
 # ===============================
-# 触发条件 (已精确分离)
+# 触发条件 (已精确分离，避免与 Sing-box 冲突)
 # ===============================
 on:
   schedule:
-    - cron: '30 0 * * *' 
+    - cron: '30 0 * * *' # 每天 UTC 00:30 运行
   workflow_dispatch:
   push:
     branches:
       - main
     paths:
-      # Mihomo 只需要监听列表文件 (Domain/IP-CIDR) 的变化
+      # Mihomo 只监听列表文件 (Domain/IP-CIDR) 的变化
       - 'src/domain/**'
       - 'src/ip/**'
       - '.github/workflows/mihomo_factory.yml'
@@ -28,7 +28,7 @@ jobs:
         uses: actions/checkout@v4
       
       # 1. 核心步骤：使用 Mihomo 官方 Docker 镜像执行转换
-      - name: Run Mihomo Conversions using Docker (Permission FIX)
+      - name: Run Mihomo Conversions using Docker (Final FIXES)
         run: |
           SOURCE_DIR="src"
           OUTPUT_DIR="rule-set"
@@ -36,18 +36,21 @@ jobs:
           mkdir -p "$OUTPUT_DIR"
           shopt -s nullglob
           
-          # 【修复】添加 --user 选项，解决静默失败（写入权限）问题
-          DOCKER_RUN_PREFIX="docker run --rm -v ${{ github.workspace }}:/workspace --user $(id -u):$(id -g) metacu/mihomo"
+          # 【修复 1: 镜像名修正】使用正确的 metacubex/mihomo
+          # 【修复 2: 权限修正】添加 --user 选项，解决静默失败（写入权限）问题
+          DOCKER_RUN_PREFIX="docker run --rm -v ${{ github.workspace }}:/workspace --user $(id -u):$(id -g) metacubex/mihomo"
           
           # --- A. Domain 列表 (src/domain/*.list & *.txt -> .mrs) ---
           echo ">>> 1. Processing Mihomo Domain Lists (src/domain)"
-          # ... (转换逻辑保持不变)
           if [ -d "$SOURCE_DIR/domain" ]; then
             for list_file in "$SOURCE_DIR"/domain/*.list "$SOURCE_DIR"/domain/*.txt; do
               filename=$(basename "$list_file")
               filename=${filename%.list}
               filename=${filename%.txt}
               
+              echo "⚙️ Converting Domain LIST: $filename"
+              
+              # Docker 内部的绝对路径
               INPUT_PATH="/workspace/${list_file}"
               OUTPUT_PATH="/workspace/rule-set/${filename}.mrs"
               
@@ -57,13 +60,15 @@ jobs:
 
           # --- B. IP-CIDR 列表 (src/ip/*.list & *.txt -> .mrs) ---
           echo ">>> 2. Processing Mihomo IPCIDR Lists (src/ip)"
-          # ... (转换逻辑保持不变)
           if [ -d "$SOURCE_DIR/ip" ]; then
             for list_file in "$SOURCE_DIR"/ip/*.list "$SOURCE_DIR"/ip/*.txt; do
               filename=$(basename "$list_file")
               filename=${filename%.list}
               filename=${filename%.txt}
               
+              echo "⚙️ Converting IPCIDR LIST: $filename"
+              
+              # Docker 内部的绝对路径
               INPUT_PATH="/workspace/${list_file}"
               OUTPUT_PATH="/workspace/rule-set/${filename}.mrs"
 
