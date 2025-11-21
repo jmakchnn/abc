@@ -1,4 +1,4 @@
-name: Mihomo Rule Factory (Docker Final)
+name: Mihomo Rule Factory (YAML Support)
 
 # ===============================
 # 触发条件 (已精确分离，避免与 Sing-box 冲突)
@@ -11,7 +11,7 @@ on:
     branches:
       - main
     paths:
-      # Mihomo 只监听列表文件 (Domain/IP-CIDR) 的变化
+      # Mihomo 监听列表文件和YAML文件的变化
       - 'src/domain/**'
       - 'src/ip/**'
       - '.github/workflows/mihomo_factory.yml'
@@ -27,8 +27,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      # 1. 核心步骤：使用 Mihomo 官方 Docker 镜像执行转换
-      - name: Run Mihomo Conversions using Docker (Final FIXES)
+      # 1. 核心步骤：使用 Mihomo 官方 Docker 镜像执行转换 (增强：支持 .yaml)
+      - name: Run Mihomo Conversions using Docker (YAML Support)
         run: |
           SOURCE_DIR="src"
           OUTPUT_DIR="rule-set"
@@ -36,44 +36,70 @@ jobs:
           mkdir -p "$OUTPUT_DIR"
           shopt -s nullglob
           
-          # 【修复 1: 镜像名修正】使用正确的 metacubex/mihomo
-          # 【修复 2: 权限修正】添加 --user 选项，解决静默失败（写入权限）问题
+          # Docker 命令前缀（包含正确的镜像名和权限修复）
           DOCKER_RUN_PREFIX="docker run --rm -v ${{ github.workspace }}:/workspace --user $(id -u):$(id -g) metacubex/mihomo"
           
-          # --- A. Domain 列表 (src/domain/*.list & *.txt -> .mrs) ---
+          # --- 辅助函数：处理转换逻辑 ---
+          # $1: 规则类型 (domain/ipcidr), $2: 输入文件路径, $3: 输出文件路径, $4: 输入格式 (text/yaml)
+          convert_rule() {
+              local RULE_TYPE="$1"
+              local INPUT_PATH="$2"
+              local OUTPUT_PATH="$3"
+              local INPUT_FORMAT="$4"
+              local FILENAME=$(basename "${OUTPUT_PATH%.mrs}")
+
+              echo "⚙️ Converting ${RULE_TYPE} (${INPUT_FORMAT}): ${FILENAME} (Source: ${INPUT_PATH})"
+              $DOCKER_RUN_PREFIX convert-ruleset "${RULE_TYPE}" "${INPUT_FORMAT}" "${INPUT_PATH}" "${OUTPUT_PATH}" || \
+                echo "⚠️ Warning: mihomo ${RULE_TYPE} conversion failed for ${FILENAME}. Check logs for error detail."
+          }
+
+          # --- A. Domain 列表 (src/domain/*.list, *.txt, *.yaml -> .mrs) ---
           echo ">>> 1. Processing Mihomo Domain Lists (src/domain)"
           if [ -d "$SOURCE_DIR/domain" ]; then
+            # 1. 转换 TEXT/LIST 文件
             for list_file in "$SOURCE_DIR"/domain/*.list "$SOURCE_DIR"/domain/*.txt; do
               filename=$(basename "$list_file")
               filename=${filename%.list}
               filename=${filename%.txt}
               
-              echo "⚙️ Converting Domain LIST: $filename"
-              
-              # Docker 内部的绝对路径
               INPUT_PATH="/workspace/${list_file}"
               OUTPUT_PATH="/workspace/rule-set/${filename}.mrs"
+              convert_rule domain "$INPUT_PATH" "$OUTPUT_PATH" text
+            done
+            
+            # 2. 转换 YAML 文件
+            for yaml_file in "$SOURCE_DIR"/domain/*.yaml; do
+              filename=$(basename "$yaml_file")
+              filename=${filename%.yaml}
               
-              $DOCKER_RUN_PREFIX convert-ruleset domain text "$INPUT_PATH" "$OUTPUT_PATH" || echo "⚠️ Warning: mihomo conversion failed for ${filename}. Check logs for error detail."
+              INPUT_PATH="/workspace/${yaml_file}"
+              OUTPUT_PATH="/workspace/rule-set/${filename}.mrs"
+              convert_rule domain "$INPUT_PATH" "$OUTPUT_PATH" yaml
             done
           fi
 
-          # --- B. IP-CIDR 列表 (src/ip/*.list & *.txt -> .mrs) ---
+          # --- B. IP-CIDR 列表 (src/ip/*.list, *.txt, *.yaml -> .mrs) ---
           echo ">>> 2. Processing Mihomo IPCIDR Lists (src/ip)"
           if [ -d "$SOURCE_DIR/ip" ]; then
+            # 1. 转换 TEXT/LIST 文件
             for list_file in "$SOURCE_DIR"/ip/*.list "$SOURCE_DIR"/ip/*.txt; do
               filename=$(basename "$list_file")
               filename=${filename%.list}
               filename=${filename%.txt}
               
-              echo "⚙️ Converting IPCIDR LIST: $filename"
-              
-              # Docker 内部的绝对路径
               INPUT_PATH="/workspace/${list_file}"
               OUTPUT_PATH="/workspace/rule-set/${filename}.mrs"
-
-              $DOCKER_RUN_PREFIX convert-ruleset ipcidr text "$INPUT_PATH" "$OUTPUT_PATH" || echo "⚠️ Warning: mihomo conversion failed for ${filename}. Check logs for error detail."
+              convert_rule ipcidr "$INPUT_PATH" "$OUTPUT_PATH" text
+            done
+            
+            # 2. 转换 YAML 文件
+            for yaml_file in "$SOURCE_DIR"/ip/*.yaml; do
+              filename=$(basename "$yaml_file")
+              filename=${filename%.yaml}
               
+              INPUT_PATH="/workspace/${yaml_file}"
+              OUTPUT_PATH="/workspace/rule-set/${filename}.mrs"
+              convert_rule ipcidr "$INPUT_PATH" "$OUTPUT_PATH" yaml
             done
           fi
           
